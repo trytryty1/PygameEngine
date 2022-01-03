@@ -1,43 +1,60 @@
-import pygame, math, os
-from pygame import *
+
+
+__version__ = '0.1'
+__author__ = 'David Wing'
+
 import math
+import os
+import pygame
+from pygame import *
+
+import math
+
 ASSET_PATH = "assets/"
 
 print("You are using aPYstate! Good luck...")
 print("Using asset path: " + ASSET_PATH)
 
-running = False
-world = None
-pgclock = None
-pgwindow = None
-pgwindowSize = (500,500)
-pgguiSurface = None
-pgguiSurfaceHighlight = None
+# ================
+# Engine variables
+# ================
+_running = False
+_pgclock = None
+_pgwindow = None
+_pgwindowSize = (500,500)
+_pgguiSurface = None
+_pgguiSurfaceHighlight = None
 
+# ============
 # Start pygame
+# ============
 def init(screenWidth, screenHeight):
     print("Initializing pygame and engine")
-    global running, world, pgclock, pgwindow, pgwindowSize, pgguiSurface, pgguiSurfaceHighlight
-    pgwindowSize = [screenWidth, screenHeight]
+    global _running, _world, _pgclock, _pgwindow, _pgwindowSize, _pgguiSurface, _pgguiSurfaceHighlight
+    _pgwindowSize = [screenWidth, screenHeight]
     # Set up the drawing window
-    pgwindow = pygame.display.set_mode(pgwindowSize)
-    pgclock = pygame.time.Clock()
-    pgguiSurface = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
-    pgguiSurfaceHighlight = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
-    pgguiSurfaceHighlight.set_colorkey((255,255,255))
+    _pgwindow = pygame.display.set_mode(_pgwindowSize)
+    _pgclock = pygame.time.Clock()
+    _pgguiSurface = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
+    _pgguiSurfaceHighlight = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
+    _pgguiSurfaceHighlight.set_colorkey((255,255,255))
 
+# =========
+# Game loop
+# =========
 def run():
-    global running, world, pgclock, pgwindow
-    running = True
-    World.start()
+    global _running, _world, _pgclock, _pgwindow
+    _running = True
     print("Starting game loop")
+
+    World.start()
     
-    while running:
+    while _running:
         # Checks pygame events
         for event in pygame.event.get():
             # Was close button pressed?
             if event.type == pygame.QUIT:
-                running = False
+                _running = False
             if event.type == pygame.KEYDOWN:
                 Input.keyPressed(event.key)
             if event.type == pygame.KEYUP:
@@ -50,7 +67,7 @@ def run():
             if event.type == pygame.MOUSEBUTTONUP:
                 Input.mouseDown[event.button-1] = False
 
-        # Update world
+        # Update _world
         World.update()
 
         Physics.testCollision()
@@ -59,20 +76,44 @@ def run():
         Renderer.draw()
         
         # Constant update speed
-        pgclock.tick(60)
+        _pgclock.tick(60)
 
     # End pygame
     print("Closing pygame...")
     pygame.quit()
 
+# ============
+# Entity Class
+# ============
+class Transform:
+    def __init__(self, x, y, rotation = 0):
+        self.location = Vector2(x, y)
+        self.rotation = rotation
+
+    def transform(self, x, y):
+        self.location = self.location.add(Vector2f(x, y))
+
+    def rotate(self, rotation):
+        self.rotation += rotation
+
+    def getX(self):
+        return self.location.x
+
+    def getY(self):
+        return self.location.y
+
+    def getRotation(self):
+        return self.rotation
+
 class Entity:
-    def __init__(self):
-        self.position = [0,0]
+    def __init__(self, x=0, y=0):
+        self.transform = Transform(x,y)
         self.children = []
         self.parent = None
         self.components = {}
         self.tags = []
         self.toDestroy = False
+        
     def destroy(self):
         for c in self.children:
             c.destroy()
@@ -85,51 +126,165 @@ class Entity:
         
     def addTag(self, tag):
         self.tags.append(tag)
+        
     def getComponent(self, name):
-        return self.components.get(name.__name__, None)#self.components[str(name)]
+        return self.components.get(name.__name__, None)
+    
     def addComponent(self, c):
         if c.__class__.__name__ in self.components.keys():
             print("Entity already has component width class name: " + c.__class__.__name__)
             return False
         else:
             self.components.update({str(c.__class__.__name__): c})
-            c.parent = self
+            c.setParent(self)
+            
     def removeComponent(self, c):
         self.components.remove(c)
+        
     def addChild(self, e):
         self.children.append(e)
         e.parent = self
+        
     def update(self):
         for c in self.components.values():
             if c.active:
                 c.update()
+                
     def start(self):
         for c in self.components.values():
             c.start()
-    def translate(self, x, y):
-        self.position[0] += x
-        self.position[1] += y
-    def x(self):
-        return self.position[0]
-    def y(self):
-        return self.position[1]
-    def setPos(self, x, y):
-        self.position[0] = x
-        self.position[1] = y
-    def setX(self, x):
-        self.position[0] = x
-    def setY(self, y):
-        self.position[1] = y
 
+# ===============
+# Component Class
+# ===============
 class Component:
     active = True
     parent = None
+    def __init__(self):
+        self.transform = None
+        
+    def setParent(self, parent):
+        self.parent = parent
+        self.transform = parnet.transform
+        
     def start(self):
         pass
+    
     def update(self):
         pass
+    
     def destroy(self):
-        pass
+        self.parent = None
+        self.transform = None
+
+# ==============================
+# ==============================
+# Graphic Systems
+# ==============================
+# ==============================
+
+class Renderer:
+    sprites = []
+    background = [55,155,255]
+    camera = (0,0)
+    drawGrid = False
+    gridSize = 32
+    gridColor = (44,44,44)
+
+    @staticmethod
+    def convertToCamera(pos):
+        global _pgwindowSize
+        pos[0] -= Renderer.camera[0] - _pgwindowSize[0]/2
+        pos[1] -= Renderer.camera[1] - _pgwindowSize[1]/2
+        return pos
+
+    def sortZLayerKey(e):
+        return e.zLevel
+    
+    @staticmethod
+    def addSprite(spriteRenderer):
+        Renderer.sprites.append(spriteRenderer)
+        Renderer.sprites.sort(reverse=True, key=Renderer.sortZLayerKey)
+
+    @staticmethod
+    def removeSprite(spriteRenderer):
+        Renderer.sprites.remove(spriteRenderer)
+
+    @staticmethod
+    def draw():
+        global _pgwindow, _pgwindowSize
+        _pgwindow.fill(Renderer.background)
+        r,g,b = Renderer.background
+        Renderer.gridColor = (r - (r/6), g - (g/6), b - (b/6))
+
+        if Renderer.drawGrid:
+            remainderx = (_pgwindowSize[0]%Renderer.gridSize)/2
+            remaindery = (_pgwindowSize[1]%Renderer.gridSize)/2
+            for i in range(math.floor(_pgwindowSize[0]/Renderer.gridSize) + 1):
+                pygame.draw.line(_pgwindow,Renderer.gridColor,
+                                 (0,Renderer.gridSize*i - remaindery),
+                                 (_pgwindowSize[0],Renderer.gridSize*i - remaindery))
+            for i in range(math.floor(_pgwindowSize[1]/Renderer.gridSize) + 1):
+                pygame.draw.line(_pgwindow,Renderer.gridColor,
+                                 (Renderer.gridSize*i - remainderx,0),
+                                 (Renderer.gridSize*i - remainderx,_pgwindowSize[0]))
+        
+        for s in Renderer.sprites:
+            x, y = Renderer.convertToCamera(s.center())
+            
+            img = pygame.transform.rotate(s.sprite,s.rotation)
+            img = pygame.transform.scale(img, (s.width, s.height))
+            _pgwindow.blit(img, (x, y))
+
+        GUI.drawGUI()
+        
+        # Flip the display
+        pygame.display.flip()
+
+class Animation(Component):
+    def __init__(self, data):
+        self.data = data
+        self.currentFrame = 0
+        self.animationSpeed = 1
+        self.currentAnimation = "None"
+        self.renderer = None
+
+    def setAnimaion(self, animName):
+        if self.currentAnimation == animName:
+            return
+        self.currentAnimation = animName
+        self.currentFrame = 0
+        
+    def start(self):
+        self.renderer = self.parent.getComponent(SpriteRenderer)
+        
+    def update(self):
+        if self.currentAnimation != "None":
+            print(self.currentAnimation)
+            currentData = self.data[self.currentAnimation]
+            self.currentFrame += self.animationSpeed
+            if self.currentFrame >= len(currentData):
+                self.currentFrame = 0
+            self.renderer.sprite = currentData[math.floor(self.currentFrame)]
+
+class SpriteRenderer(Component):
+    def __init__(self, x=0, y=0, width=32, height=32, sprite=None,
+                 rotation = 0, zLevel = 0, alpha = 0): 
+        self.size = Vector2(width, height)   
+        self.location = Transform(x, y, rotation = rotation)
+        self.sprite = sprite
+        self.zLevel = zLevel
+        self.alpha = alpha
+        self.draw = True
+        
+    def start(self):
+        Renderer.addSprite(self)
+        
+    def center(self):
+        return (self.transform.location.add(self.location)).add(self.size.scale(0.5))
+    
+    def destroy(self):
+        Renderer.removeSprite(self)
 
 class SpriteSheet:
     def __init__(self, image, rows, columns, spriteWidth, spriteHeight):
@@ -154,12 +309,20 @@ class SpriteSheet:
         image.set_colorkey((0,0,0))
         return image
 
+# ==============================
+# ==============================
+# Physics Systems
+# ==============================
+# ==============================
 class Physics:
     colliders = []
 
     @staticmethod
     def addCollider(collider):
         Physics.colliders.append(collider)
+
+    def removeCollider(collider):
+        Physics.colliders.remove(collider)
 
     @staticmethod
     def testCollision():
@@ -171,6 +334,69 @@ class Physics:
                         c.collided(c2)
                         c2.collided(c)
 
+class ColliderRect(Component):
+    def start(self):
+        Physics.addCollider(self)
+    def destroy(self):
+        Physics.removeCollider(self)
+    def __init__(self):
+        self.offset = [0,0]
+        self.width = 0
+        self.height = 0
+        self.isTrigger = True
+        self.collisionListener = None
+    def setRect(self, x, y, width, height):
+        self.setOffset(x,y)
+        self.setSize(width,height)
+    def setOffset(self, x, y):
+        self.offset = [x,y]
+    def setSize(self, width, height):
+        self.height = height
+        self.width = width
+    def collided(self, c):
+        if self.collisionListener is None:
+            pass
+        else:
+            self.collisionListener(c)
+    def getRect(self):
+        return pygame.Rect(self.parent.x() + self.offset[0] - self.width/2,
+                           self.parent.y() + self.offset[1] - self.height/2,
+                           self.width, self.height)
+
+# ==============================
+# ==============================
+# Utils
+# ==============================
+# ==============================
+
+# Math stuff
+class Vector2:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def magnitude(self):
+        return math.hypot(x, y)
+
+    def unit(self):
+        magnitude = self.magnitude()
+        return Vector2(x/magnitude, y/magnitude)
+
+    def subtract(self, vector):
+        return Vector2(self.x - vector.x, self.y - vector.y)
+
+    def add(self, vector):
+        return Vector2(self.x + vector.y, self.y + vector.y)
+
+    def distance(self, vector):
+        return Vector2(math.hypot(vector.x - self.x, vector.y - self.y))
+
+    def angle(self, vector):
+        return math.atan2(self.x - vector.x, self.y - vector.y)
+
+    def scale(self, scale):
+        return Vector(self.x*scale, self.y*scale)
+
 def getImage(name):
     global ASSET_PATH
     transColor = pygame.Color(255, 255, 255)
@@ -178,76 +404,14 @@ def getImage(name):
     image.set_colorkey(transColor)
     return image
 
-class Renderer:
-    sprites = []
-    background = [55,155,255]
-    camera = (0,0)
-    drawGrid = True
-    gridSize = 32
-    gridColor = (44,44,44)
-
-    @staticmethod
-    def convertToCamera(pos):
-        global pgwindowSize
-        pos[0] -= Renderer.camera[0] - pgwindowSize[0]/2
-        pos[1] -= Renderer.camera[1] - pgwindowSize[1]/2
-        return pos
-
-    def sortZLayerKey(e):
-        return e.zLevel
-    
-    @staticmethod
-    def addSprite(spriteRenderer):
-        Renderer.sprites.append(spriteRenderer)
-        Renderer.sprites.sort(reverse=True, key=Renderer.sortZLayerKey)
-
-    @staticmethod
-    def draw():
-        global pgwindow, pgwindowSize
-        pgwindow.fill(Renderer.background)
-        r,g,b = Renderer.background
-        Renderer.gridColor = (r - (r/6), g - (g/6), b - (b/6))
-
-        if Renderer.drawGrid:
-            remainderx = (pgwindowSize[0]%Renderer.gridSize)/2
-            remaindery = (pgwindowSize[1]%Renderer.gridSize)/2
-            for i in range(math.floor(pgwindowSize[0]/Renderer.gridSize) + 1):
-                pygame.draw.line(pgwindow,Renderer.gridColor,
-                                 (0,Renderer.gridSize*i - remaindery),
-                                 (pgwindowSize[0],Renderer.gridSize*i - remaindery))
-            for i in range(math.floor(pgwindowSize[1]/Renderer.gridSize) + 1):
-                pygame.draw.line(pgwindow,Renderer.gridColor,
-                                 (Renderer.gridSize*i - remainderx,0),
-                                 (Renderer.gridSize*i - remainderx,pgwindowSize[0]))
-        
-        for s in Renderer.sprites:
-            x, y = Renderer.convertToCamera(s.center())
-            
-            img = pygame.transform.rotate(s.sprite,s.rotation)
-            img = pygame.transform.scale(img, (s.width, s.height))
-            pgwindow.blit(img, (x, y))
-
-        GUI.drawGUI()
-        
-        # Flip the display
-        pygame.display.flip()
-
-class SpriteRenderer(Component):
-    def __init__(self):        
-        self.sprite = None
-        self.width = 0
-        self.height = 0
-        self.rotation = 0
-        self.zLevel = 0
-        self.draw = True
-        self.offset = [0,0]
-        self.alpha = 0
-    def start(self):
-        Renderer.addSprite(self)
-    def center(self):
-        return [
-            self.parent.x() + self.offset[0] - self.width/2,
-            self.parent.y() + self.offset[1] - self.height/2]
+# Math
+class Vector2:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def normal(self):
+        # TODO: finish        
+        return Vector2(self.x, self.y)
 
 class Grid:
     def __init__(self, width, height):
@@ -307,31 +471,6 @@ class TileGrid(Component):
     def setGrid(self, grid):
         pass
 
-class ColliderRect(Component):
-    def start(self):
-        Physics.addCollider(self)
-    def __init__(self):
-        self.offset = [0,0]
-        self.width = 0
-        self.height = 0
-        self.isTrigger = True
-        self.collisionListener = None
-    def setRect(self, x, y, width, height):
-        self.setOffset(x,y)
-        self.setSize(width,height)
-    def setOffset(self, x, y):
-        self.offset = [x,y]
-    def setSize(self, width, height):
-        self.height = height
-        self.width = width
-    def collided(self, c):
-        if self.collisionListener is None:
-            pass
-        else:
-            self.collisionListener(c)
-    def getRect(self):
-        return pygame.Rect(self.parent.x() + self.offset[0] - self.width/2,self.parent.y() + self.offset[1] - self.height/2, self.width, self.height)
-
 class World:
     entities = []
     hasStarted = False
@@ -365,6 +504,11 @@ class World:
         if World.hasStarted:
             e.start()
 
+# ==============================
+# ==============================
+# GUI System
+# ==============================
+# ==============================
 class GUI:
     elements = []
     
@@ -427,8 +571,8 @@ class GUI:
             container.height = self.height
 
         def draw(self):
-            global pgguiSurfaceHighlight, pgguiSurface
-            pygame.draw.rect(pgguiSurface, (0,0,0,50), (self.x, self.y, self.width, self.height))
+            global _pgguiSurfaceHighlight, _pgguiSurface
+            pygame.draw.rect(_pgguiSurface, (0,0,0,50), (self.x, self.y, self.width, self.height))
             super().draw()
 
             
@@ -446,25 +590,25 @@ class GUI:
             self.sprite = pygame.transform.scale(sprite, (self.width, self.height))
             
         def draw(self):
-            global pgguiSurface, pgguiSurfaceHighlight
+            global _pgguiSurface, _pgguiSurfaceHighlight
             if self.sprite is None:
-                pygame.draw.rect(pgguiSurface, self.color, (self.x, self.y, self.width, self.height))
+                pygame.draw.rect(_pgguiSurface, self.color, (self.x, self.y, self.width, self.height))
             else:
-                pgguiSurface.blit(self.sprite, (self.x, self.y))
+                _pgguiSurface.blit(self.sprite, (self.x, self.y))
             alpha = 50
             if self.mouseHover:
                 if Input.mouseLeftPressed():
                     alpha = 100
-                pygame.draw.rect(pgguiSurfaceHighlight, (0,0,0,alpha), (self.x, self.y, self.width, self.height))
+                pygame.draw.rect(_pgguiSurfaceHighlight, (0,0,0,alpha), (self.x, self.y, self.width, self.height))
 
     def drawGUI():
         for e in GUI.elements:
             e.draw()
-        global pgguiSurface, pgguiSurfaceHighlight, pgwindow, pgwindowSize
-        screenWidth, screenHeight = pgwindowSize
-        pgwindow.blit(pgguiSurface, (0,0))
-        pgwindow.blit(pgguiSurfaceHighlight, (0,0))
-        pgguiSurfaceHighlight.fill((255,255,255))
+        global _pgguiSurface, _pgguiSurfaceHighlight, _pgwindow, _pgwindowSize
+        screenWidth, screenHeight = _pgwindowSize
+        _pgwindow.blit(_pgguiSurface, (0,0))
+        _pgwindow.blit(_pgguiSurfaceHighlight, (0,0))
+        _pgguiSurfaceHighlight.fill((255,255,255))
         
 
     @staticmethod
@@ -486,12 +630,12 @@ class Input:
         return Input.mouseX
 
     def getWorldMouseX():
-        global pgwindowSize
-        return Input.mouseX - Renderer.camera[0] - pgwindowSize[0]/2
+        global _pgwindowSize
+        return Input.mouseX - Renderer.camera[0] - _pgwindowSize[0]/2
 
     def getWorldMouseY():
-        global pgwindowSize
-        return Input.mouseY - Renderer.camera[1] - pgwindowSize[1]/2
+        global _pgwindowSize
+        return Input.mouseY - Renderer.camera[1] - _pgwindowSize[1]/2
     
     @staticmethod
     def getMouseY():
