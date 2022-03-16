@@ -3,12 +3,16 @@
 __version__ = '0.1'
 __author__ = 'David Wing'
 
-import math
 import os
-import pygame
+import math
+
+try:
+    import pygame
+    print("pygame module sucesfully installed")
+except ModuleNotFoundError:
+    print("module 'pygame' is not installed you tard")
 from pygame import *
 
-import math
 
 ASSET_PATH = "assets/"
 
@@ -38,6 +42,50 @@ def init(screenWidth, screenHeight):
     _pgguiSurface = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
     _pgguiSurfaceHighlight = pygame.Surface([screenWidth,screenHeight], pygame.SRCALPHA, 32)
     _pgguiSurfaceHighlight.set_colorkey((255,255,255))
+
+    
+# Math stuff
+class Vector:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __str__(self):
+        return "x: " + str(self.x) + " ||| y: " + str(self.y)
+        
+    def add(self, vector):
+        return Vector(self.x + vector.x, self.y + vector.y)
+
+    def magnitude(self):
+        return math.hypot(self.x, self.y)
+
+    def unit(self):
+        magnitude = self.magnitude()
+        # Stop division by 0
+        if magnitude == 0:
+            return Vector(0,0)
+        return Vector(self.x/magnitude, self.y/magnitude)
+
+    def subtract(self, vector):
+        return Vector(self.x - vector.x, self.y - vector.y)
+
+    def distance(self, vector):
+        return Vector(math.hypot(vector.x - self.x, vector.y - self.y))
+
+    def angle(self, vector):
+        return math.atan2(self.x - vector.x, self.y - vector.y)
+
+    def angleUnit(self, vector):
+        angle = self.angle(vector)
+        angleVector = Vector(math.cos(angle), math.sin(angle))
+        return angleVector.unit()
+
+    def scale(self, scale):
+        return Vector(self.x*scale, self.y*scale)
+
+    def set(self, x, y):
+        self.x = x
+        self.y = y
 
 # =========
 # Game loop
@@ -70,7 +118,7 @@ def run():
         # Update _world
         World.update()
 
-        Physics.testCollision()
+        Physics.updatePhysics()
 
         # Draw everything
         Renderer.draw()
@@ -87,11 +135,11 @@ def run():
 # ============
 class Transform:
     def __init__(self, x, y, rotation = 0):
-        self.location = Vector2(x, y)
+        self.location = Vector(x, y)
         self.rotation = rotation
 
-    def transform(self, x, y):
-        self.location = self.location.add(Vector2f(x, y))
+    def translate(self, x, y):
+        self.location = self.location.add(Vector(x, y))
 
     def rotate(self, rotation):
         self.rotation += rotation
@@ -104,6 +152,43 @@ class Transform:
 
     def getRotation(self):
         return self.rotation
+
+class Rectangle(Transform):
+    def __init__(self, x = 0, y = 0, width = 32, height = 32, rotation = 0):
+        self.location = Vector(x, y)
+        self.rotation = rotation
+        self.size = Vector(width, height)
+
+    def getWidth(self):
+        return self.size.x
+
+    def getHeight(self):
+        return self.size.y
+
+    def center(self):
+        return Vector(self.getX() - self.getWidth()*0.5, self.getY() - self.getHeight()*0.5)
+
+    def isCollided(self, rect2):
+        rect1 = self
+        if (
+                rect1.getX() < rect2.getX() + rect2.getWidth() and
+                rect1.getX() + rect1.getWidth() > rect2.getX() and
+                rect1.getY() < rect2.getY() + rect2.getHeight() and
+                rect1.getY() + rect1.getHeight() > rect2.getY()
+        ):
+            return True
+        else:
+            return False
+
+    def contains(self, point):
+        if (
+                point.getX() > self.getWidth() and point.getX() < self.getX() + self.getWidth() and
+                point.getY() > self.getHeight() and point.getY() < self.getY() + self.getHeight()
+            ):
+            return True
+        else:
+            return False
+            
 
 class Entity:
     def __init__(self, x=0, y=0):
@@ -154,6 +239,10 @@ class Entity:
         for c in self.components.values():
             c.start()
 
+    def onCollisionEnter(self, collider):
+        for c in self.components.values():
+            c.onCollisionEnter(collider)
+
 # ===============
 # Component Class
 # ===============
@@ -165,7 +254,7 @@ class Component:
         
     def setParent(self, parent):
         self.parent = parent
-        self.transform = parnet.transform
+        self.transform = parent.transform
         
     def start(self):
         pass
@@ -177,19 +266,28 @@ class Component:
         self.parent = None
         self.transform = None
 
+    def onCollisionEnter(self, collision):
+        pass
+
 # ==============================
 # ==============================
 # Graphic Systems
 # ==============================
 # ==============================
-
 class Renderer:
     sprites = []
     background = [55,155,255]
-    camera = (0,0)
     drawGrid = False
     gridSize = 32
     gridColor = (44,44,44)
+    class Camera:
+        def __init__(self):
+            self.location = Vector(0,0)
+        def convertToCamera(self, pos):
+            return pos.add(self.location.add(
+                Vector(_pgwindowSize[0]/2, _pgwindowSize[1]/2)))
+        
+    camera = Camera()
 
     @staticmethod
     def convertToCamera(pos):
@@ -228,13 +326,15 @@ class Renderer:
                 pygame.draw.line(_pgwindow,Renderer.gridColor,
                                  (Renderer.gridSize*i - remainderx,0),
                                  (Renderer.gridSize*i - remainderx,_pgwindowSize[0]))
-        
+        # Draw sprites
         for s in Renderer.sprites:
-            x, y = Renderer.convertToCamera(s.center())
-            
-            img = pygame.transform.rotate(s.sprite,s.rotation)
-            img = pygame.transform.scale(img, (s.width, s.height))
-            _pgwindow.blit(img, (x, y))
+            drawLoc = Renderer.camera.convertToCamera(s.center())
+            # Rotate sprite
+            img = pygame.transform.rotate(s.sprite,s.transform.rotation)
+            # Scale sprite
+            img = pygame.transform.scale(img, (s.rectangle.getWidth(), s.rectangle.getHeight()))
+            # Draw sprite
+            _pgwindow.blit(img, (drawLoc.x, drawLoc.y))
 
         GUI.drawGUI()
         
@@ -269,9 +369,8 @@ class Animation(Component):
 
 class SpriteRenderer(Component):
     def __init__(self, x=0, y=0, width=32, height=32, sprite=None,
-                 rotation = 0, zLevel = 0, alpha = 0): 
-        self.size = Vector2(width, height)   
-        self.location = Transform(x, y, rotation = rotation)
+                 rotation = 0, zLevel = 0, alpha = 0):
+        self.rectangle = Rectangle(x, y, width, height)
         self.sprite = sprite
         self.zLevel = zLevel
         self.alpha = alpha
@@ -281,7 +380,7 @@ class SpriteRenderer(Component):
         Renderer.addSprite(self)
         
     def center(self):
-        return (self.transform.location.add(self.location)).add(self.size.scale(0.5))
+        return self.transform.location.add(self.rectangle.center())
     
     def destroy(self):
         Renderer.removeSprite(self)
@@ -314,104 +413,251 @@ class SpriteSheet:
 # Physics Systems
 # ==============================
 # ==============================
+
+DYNAMIC = 0
+KINETIC = 1
+STATIC = 3
+
 class Physics:
     colliders = []
+    ridgidBodys = []
 
     @staticmethod
     def addCollider(collider):
         Physics.colliders.append(collider)
 
+    @staticmethod
     def removeCollider(collider):
         Physics.colliders.remove(collider)
 
     @staticmethod
+    def addRigidBody(e):
+        Physics.ridgidBodys.append(e)
+
+    @staticmethod
+    def removeRigidBody(e):
+        Physics.ridgidBodys.remove(e)
+
+    # collision left = 0, collision right = 1, collision up = 2, collision down = 3
+    # TODO: add bounce
+    @staticmethod
+    def rigidBodyCollision(rb1, rb2, collisiondir):
+        dirmatrix = Vector(0,0)
+        if collisiondir == 0:
+            dirmatrix.x = 1
+            dirmatrix.y = 0
+        elif collisiondir == 1:
+            dirmatrix.x = 1
+            dirmatrix.y = 0
+        elif collisiondir == 2:
+            dirmatrix.x = 0
+            dirmatrix.y = 1
+        elif collisiondir == 3:
+            dirmatrix.x = 0
+            dirmatrix.y = 1
+
+        if rb1.physicsType != STATIC:
+            force1 = rb2.velocity.scale(rb2.mass)
+            force1 = force1.scale(1/rb1.mass)
+            force1.x *= dirmatrix.x
+            force1.y *= dirmatrix.y
+            rb1.applyForce(force1)
+        if rb2.physicsType != STATIC:
+            force2 = rb1.velocity.scale(rb1.mass)
+            force2 = force2.scale(-1/rb2.mass)
+            force2.x *= dirmatrix.x
+            force2.y *= dirmatrix.y
+            rb1.applyForce(force2)
+
+    @staticmethod
+    def updatePhysics():
+        global _gravity, _world_border
+        ridgidBodys = Physics.ridgidBodys
+        for rb in ridgidBodys:
+            toMove = Vector(0,0)
+            # Apply gravity
+            if rb.physicsType == DYNAMIC:
+                rb.velocity = rb.velocity.add(_gravity)
+
+            
+            toMove = toMove.add(rb.velocity)
+            print(rb.velocity)
+            #print(toMove)
+
+            # Check if object has velocity
+            # TODO: FIX IF VELOCITY
+            if True:#not (rb.velocity.x == 0 and rb.velocity.y == 0):
+                collider1 = rb.collider
+                
+
+                # Check for collision
+                for rb2 in ridgidBodys:
+                    if rb2 != rb:# and not (rb2.physicsType == STATIC and rb2.physicsType == STATIC):
+                        collider2 = rb2.collider
+                        rect1 = collider1.getRect()
+                        rect2 = collider2.getRect()
+                        if (
+                                (rect1.getX() + toMove.x > rect2.getX() and
+                                rect1.getX() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() > rect2.getY() and
+                                rect1.getY() < rect2.getY() + rect2.getHeight()) or
+                                (rect1.getX() + rect1.getWidth() + toMove.x > rect2.getX() and
+                                rect1.getX() + rect1.getWidth() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() + rect1.getHeight() > rect2.getY() and
+                                rect1.getY() + rect1.getHeight() < rect2.getY() + rect2.getHeight()) or
+                                (rect1.getX() + rect1.getWidth() + toMove.x > rect2.getX() and
+                                rect1.getX() + rect1.getWidth() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() > rect2.getY() and
+                                rect1.getY() < rect2.getY() + rect2.getHeight())
+                            ):
+                            if(rect1.getX() > rect2.getX()):
+                                Physics.rigidBodyCollision(rb, rb2, 1)
+                            if(rect1.getX() < rect2.getX()):
+                                Physics.rigidBodyCollision(rb, rb2, 0)
+                        elif (
+                                (rect1.getX() + toMove.x > rect2.getX() and
+                                rect1.getX() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() + toMove.y > rect2.getY() and
+                                rect1.getY() + toMove.y < rect2.getY() + rect2.getHeight()) or
+                                (rect1.getX() + rect1.getWidth() + toMove.x > rect2.getX() and
+                                rect1.getX() + rect1.getWidth() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() + rect1.getHeight() + toMove.y > rect2.getY() and
+                                rect1.getY() + rect1.getHeight() + toMove.y < rect2.getY() + rect2.getHeight()) or
+                                (rect1.getX() + rect1.getWidth() + toMove.x > rect2.getX() and
+                                rect1.getX() + rect1.getWidth() + toMove.x < rect2.getX() + rect2.getWidth() and
+                                rect1.getY() > rect2.getY() and
+                                rect1.getY() < rect2.getY() + rect2.getHeight())
+                            ):
+                            # Collided bottom
+                            if(rect1.getY() > rect2.getY()):
+                                Physics.rigidBodyCollision(rb, rb2, 2)
+                            if(rect1.getY() < rect2.getY()):
+                                Physics.rigidBodyCollision(rb, rb2, 3)
+            rb.transform.translate(toMove.x, toMove.y)
+            toMove.x = 0
+            toMove.y = 0
+
+        Physics.testCollision()
+        
+        for rb in ridgidBodys:
+            rb.finalizeMove()
+
+        # Keep all ridgid bodys in the border
+        for rb in ridgidBodys:
+            if(rb.transform.getX() < _world_border.getX()):
+                rb.transform.location.x = _world_border.getX()
+                rb.velocity.x += 1
+            if(rb.transform.getY() < _world_border.getY()):
+                rb.transform.location.y = _world_border.getY()
+                rb.velocity.y += 1
+            if(rb.transform.getX() > _world_border.getX() + _world_border.getWidth()):
+                rb.transform.location.x = _world_border.getX() + _world_border.getWidth()
+                rb.velocity.x -= 1
+            if(rb.transform.getY() > _world_border.getY() + _world_border.getHeight()):
+                rb.transform.location.y = _world_border.getY() + _world_border.getHeight()
+                rb.velocity.y -= 1
+            
+
+    @staticmethod
     def testCollision():
-        for c in Physics.colliders:
+        for c in Physics.ridgidBodys:
+            rbcollider = c.collider
             for c2 in Physics.colliders:
-                if not (c == c2):
-                    if c.getRect().colliderect(c2.getRect()):
-                        
-                        c.collided(c2)
-                        c2.collided(c)
+                if not (rbcollider == c2):
+                    if rbcollider.getRect().isCollided(c2.getRect()):
+                        c.parent.onCollisionEnter(Collision(c2, c2.parent, None))
+
+_gravity = Vector(0, 0.01)
+_world_border = Rectangle(-250,-250,500,500)
+def setGravity(gravity):
+    global _gravity
+    _gravity = gravity
+
+class RigidBody(Component):
+
+    def __init__(self, physicsType = DYNAMIC):
+        self.velocity = Vector(0,0)
+        self.collisionVelocity = Vector(0,0)
+        self.physicsType = physicsType
+        self.collider = None
+        self.mass = 1
+        
+    def start(self):
+        # TODO: Try to make this safer please
+        if self.collider == None:
+            self.collider = self.parent.getComponent(ColliderRect)
+            
+        Physics.addRigidBody(self)
+        self.finalizeMove()
+
+    def destroy(self):
+        Physics.removeRigidBody(self)
+
+    def undoMove(self):
+        self.transform.x = self.lastLocation.x
+        self.transform.y = self.lastLocation.y
+        self.resetLastLoc()
+
+    def resetLastLoc(self):
+        self.lastLocation = Vector(self.transform.getX(), self.transform.getY())
+
+    def finalizeMove(self):
+        self.resetLastLoc()
+
+    def applyForce(self, force):
+        self.velocity = self.velocity.add(force)
+
+    def applyCollisionForce(self, force):
+        self.collisionVelocity = self.collisionVelocity.add(force)
+
+class Collision():
+    def __init__(self, collider, gameObject, rigidBody):
+        self.collider = collider
+        self.gameObject = gameObject
+        self.rigidBody = rigidBody
 
 class ColliderRect(Component):
     def start(self):
         Physics.addCollider(self)
     def destroy(self):
         Physics.removeCollider(self)
-    def __init__(self):
-        self.offset = [0,0]
-        self.width = 0
-        self.height = 0
+    def __init__(self, rectangle = Rectangle(0,0,32,32)):
+        self.rectangle = rectangle
         self.isTrigger = True
         self.collisionListener = None
-    def setRect(self, x, y, width, height):
-        self.setOffset(x,y)
-        self.setSize(width,height)
-    def setOffset(self, x, y):
-        self.offset = [x,y]
-    def setSize(self, width, height):
-        self.height = height
-        self.width = width
     def collided(self, c):
         if self.collisionListener is None:
             pass
         else:
             self.collisionListener(c)
     def getRect(self):
-        return pygame.Rect(self.parent.x() + self.offset[0] - self.width/2,
-                           self.parent.y() + self.offset[1] - self.height/2,
-                           self.width, self.height)
+        world = Rectangle(self.rectangle.getX() + self.transform.getX(),
+                  self.rectangle.getY() + self.transform.getY(),
+                  self.rectangle.getWidth(),
+                  self.rectangle.getHeight())
+        return world
 
 # ==============================
 # ==============================
 # Utils
 # ==============================
 # ==============================
+_assets = {}
 
-# Math stuff
-class Vector2:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-    def magnitude(self):
-        return math.hypot(x, y)
-
-    def unit(self):
-        magnitude = self.magnitude()
-        return Vector2(x/magnitude, y/magnitude)
-
-    def subtract(self, vector):
-        return Vector2(self.x - vector.x, self.y - vector.y)
-
-    def add(self, vector):
-        return Vector2(self.x + vector.y, self.y + vector.y)
-
-    def distance(self, vector):
-        return Vector2(math.hypot(vector.x - self.x, vector.y - self.y))
-
-    def angle(self, vector):
-        return math.atan2(self.x - vector.x, self.y - vector.y)
-
-    def scale(self, scale):
-        return Vector(self.x*scale, self.y*scale)
-
-def getImage(name):
-    global ASSET_PATH
+def loadImage(name):
+    global ASSET_PATH, _assets
     transColor = pygame.Color(255, 255, 255)
     image = pygame.image.load(ASSET_PATH + "sprites/" + name + ".png").convert()
     image.set_colorkey(transColor)
+    _assets[name] = image
     return image
 
-# Math
-class Vector2:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-    def normal(self):
-        # TODO: finish        
-        return Vector2(self.x, self.y)
+def getImage(name):
+    global _assets
+    if name in _assets:
+        return _assets[name]
+    else:
+        return loadImage(name)
 
 class Grid:
     def __init__(self, width, height):
@@ -631,11 +877,11 @@ class Input:
 
     def getWorldMouseX():
         global _pgwindowSize
-        return Input.mouseX - Renderer.camera[0] - _pgwindowSize[0]/2
+        return Input.mouseX - Renderer.camera.location.x - _pgwindowSize[0]/2
 
     def getWorldMouseY():
         global _pgwindowSize
-        return Input.mouseY - Renderer.camera[1] - _pgwindowSize[1]/2
+        return Input.mouseY - Renderer.camera.location.y - _pgwindowSize[1]/2
     
     @staticmethod
     def getMouseY():
